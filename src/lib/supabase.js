@@ -25,7 +25,16 @@ export async function fetchProducts() {
 
 export async function insertProduct(prod) {
   if (!supabase) return null
-  const { data, error } = await supabase.from('products').insert([prod]).select().single()
+  const payload = {
+    name: prod.name,
+    price: prod.price,
+    stock: prod.stock,
+    category: prod.category,
+    icon: prod.icon || '💊',
+    description: prod.description || '',
+    image_url: prod.image_url || null,
+  }
+  const { data, error } = await supabase.from('products').insert([payload]).select().single()
   if (error) { console.error('insertProduct:', error.message); return null }
   return data
 }

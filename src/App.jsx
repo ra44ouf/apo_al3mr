@@ -1,16 +1,42 @@
 // src/App.jsx
-import { useState, useEffect } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { StoreProvider, useStore } from './hooks/useStore'
 import Landing from './components/Landing'
 import Navbar from './components/Navbar'
 import Toast from './components/Toast'
-import AuthPage from './pages/AuthPage'
-import HomePage from './pages/HomePage'
-import ProductsPage from './pages/ProductsPage'
-import CartPage from './pages/CartPage'
-import ProfilePage from './pages/ProfilePage'
-import AdminPage from './pages/AdminPage'
+
+const HomePage      = lazy(() => import('./pages/HomePage'))
+const ProductsPage  = lazy(() => import('./pages/ProductsPage'))
+const CartPage      = lazy(() => import('./pages/CartPage'))
+const ProfilePage   = lazy(() => import('./pages/ProfilePage'))
+const AdminPage     = lazy(() => import('./pages/AdminPage'))
+const AuthPage      = lazy(() => import('./pages/AuthPage'))
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <div style={{
+        width: 32, height: 32, borderRadius: '50%',
+        border: '3px solid #0F3460', borderTopColor: 'transparent',
+        animation: 'spin 0.8s linear infinite',
+      }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+  )
+}
+
+function Layout({ children }) {
+  return (
+    <div className="min-h-screen" style={{ background: '#F8FAFC' }}>
+      <Navbar />
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        <Suspense fallback={<PageLoader />}>{children}</Suspense>
+      </main>
+      <Toast />
+    </div>
+  )
+}
 
 function PrivateRoute({ children }) {
   const { user } = useStore()
@@ -26,60 +52,21 @@ function AppRouter() {
     setShowLanding(false)
   }
 
-  // Show landing animation on first visit
   if (showLanding && !user) return <Landing onDone={doneLanding} />
 
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/auth" element={user ? <Navigate to="/" /> : <AuthPage />} />
-        <Route path="/" element={
-          <PrivateRoute>
-            <div className="min-h-screen" style={{ background: '#EFF6FF' }}>
-              <Navbar />
-              <main className="max-w-6xl mx-auto px-4 py-5">
-                <HomePage />
-              </main>
-              <Toast />
-            </div>
-          </PrivateRoute>
+        <Route path="/auth" element={
+          <Suspense fallback={<PageLoader />}>
+            {user ? <Navigate to="/" /> : <AuthPage />}
+          </Suspense>
         } />
-        <Route path="/products" element={
-          <PrivateRoute>
-            <div className="min-h-screen" style={{ background: '#EFF6FF' }}>
-              <Navbar />
-              <main className="max-w-6xl mx-auto px-4 py-5"><ProductsPage /></main>
-              <Toast />
-            </div>
-          </PrivateRoute>
-        } />
-        <Route path="/cart" element={
-          <PrivateRoute>
-            <div className="min-h-screen" style={{ background: '#EFF6FF' }}>
-              <Navbar />
-              <main className="max-w-6xl mx-auto px-4 py-5"><CartPage /></main>
-              <Toast />
-            </div>
-          </PrivateRoute>
-        } />
-        <Route path="/profile" element={
-          <PrivateRoute>
-            <div className="min-h-screen" style={{ background: '#EFF6FF' }}>
-              <Navbar />
-              <main className="max-w-6xl mx-auto px-4 py-5"><ProfilePage /></main>
-              <Toast />
-            </div>
-          </PrivateRoute>
-        } />
-        <Route path="/admin" element={
-          <PrivateRoute>
-            <div className="min-h-screen" style={{ background: '#EFF6FF' }}>
-              <Navbar />
-              <main className="max-w-6xl mx-auto px-4 py-5"><AdminPage /></main>
-              <Toast />
-            </div>
-          </PrivateRoute>
-        } />
+        <Route path="/" element={<PrivateRoute><Layout><HomePage /></Layout></PrivateRoute>} />
+        <Route path="/products" element={<PrivateRoute><Layout><ProductsPage /></Layout></PrivateRoute>} />
+        <Route path="/cart" element={<PrivateRoute><Layout><CartPage /></Layout></PrivateRoute>} />
+        <Route path="/profile" element={<PrivateRoute><Layout><ProfilePage /></Layout></PrivateRoute>} />
+        <Route path="/admin" element={<PrivateRoute><Layout><AdminPage /></Layout></PrivateRoute>} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </BrowserRouter>

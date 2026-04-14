@@ -65,44 +65,55 @@ export function StoreProvider({ children }) {
     role: profile?.role || 'user',
   })
 
+  // ─── helper: promise مع timeout ────────────────────
+  const withTimeout = (promise, ms, fallback = null) =>
+    Promise.race([
+      promise,
+      new Promise(resolve => setTimeout(() => resolve(fallback), ms)),
+    ])
+
   // ─── Supabase Auth Listener ────────────────────────
   useEffect(() => {
     if (!supabase) {
-      // وضع offline: حمّل من localStorage
       const cached = ls.get('user', null)
       if (cached) setUser(cached)
       setLoading(false)
       return
     }
 
-    // جلسة حالية
+    // safety: أقصى وقت انتظار 5 ثواني بغض النظر عن أي شيء
+    const safetyTimeout = setTimeout(() => setLoading(false), 5000)
+
     const initAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
+        // getSession مع timeout 4 ثواني
+        const sessionResult = await withTimeout(
+          supabase.auth.getSession(),
+          4000,
+          { data: { session: null } }
+        )
+        const session = sessionResult?.data?.session
         if (session?.user) {
-          const profile = await fetchProfile(session.user.id)
+          // fetchProfile مع timeout 3 ثواني — لو ما ردش نبني user بدون profile
+          const profile = await withTimeout(fetchProfile(session.user.id), 3000, null)
           setUser(buildUser(session.user, profile))
         }
       } catch (err) {
         console.error('Auth Init Error:', err)
       } finally {
+        clearTimeout(safetyTimeout)
         setLoading(false)
       }
     }
 
     initAuth()
 
-    // أمان إضافي: إذا استغرق التحميل أكثر من 7 ثوانٍ، نقوم بإلغائه
-    const safetyTimeout = setTimeout(() => {
-      setLoading(false)
-    }, 7000)
-
     // استماع للتغييرات
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        // فقط نقوم بتحديث البيانات إذا حدث تسجيل دخول أو تغير في الجلسة
         if (event === 'SIGNED_IN' || event === 'USER_UPDATED' || event === 'INITIAL_SESSION') {
-          const profile = await fetchProfile(session.user.id)
+          // fetchProfile مع timeout 3 ثواني — لو ما ردش نبني user بالبيانات الأساسية
+          const profile = await withTimeout(fetchProfile(session.user.id), 3000, null)
           setUser(buildUser(session.user, profile))
         }
       } else {
@@ -110,10 +121,7 @@ export function StoreProvider({ children }) {
       }
     })
 
-    return () => {
-      subscription.unsubscribe()
-      clearTimeout(safetyTimeout)
-    }
+    return () => { subscription.unsubscribe() }
   }, [])
 
   // ─── تحميل المنتجات ────────────────────────────────
@@ -186,30 +194,62 @@ export function StoreProvider({ children }) {
 
   // ─── Auth ──────────────────────────────────────────
   const login = async (email, pass) => {
-    if (supabase) {
-      const { error } = await signInUser({ email, password: pass })
-      if (!error) return null
-      if (error !== 'offline') return 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
+    // أولاً: مدير محلي فوراً (بدون إنترنت)
+    const localUser = users.find(u => u.email === email && u.pass === pass)
+    if (localUser) {
+      setUser(localUser)
+      ls.set('user', localUser)
+      return null
     }
-    // Fallback: مدير محلي
-    const u = users.find(u => u.email === email && u.pass === pass)
-    if (!u) return 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
-    setUser(u)
-    ls.set('user', u)
-    return null
+
+    if (supabase) {
+      try {
+        // timeout 8 ثواني — لو Supabase بطيء أو معلق
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 8000)
+        )
+        const result = await Promise.race([
+          signInUser({ email, password: pass }),
+          timeout,
+        ])
+        if (!result.error) return null
+        if (result.error === 'offline') return 'لا يوجد اتصال بالخادم'
+        return 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
+      } catch (e) {
+        if (e.message === 'timeout') return 'انتهت مهلة الاتصال — تحقق من إعدادات Supabase أو الإنترنت'
+        return 'حدث خطأ في الاتصال — حاول مجدداً'
+      }
+    }
+
+    return 'البريد الإلكتروني أو كلمة المرور غير صحيحة'
   }
 
   const register = async (data) => {
     if (supabase) {
-      const { error } = await signUpUser({
-        email: data.email,
-        password: data.pass,
-        name: data.name,
-        phone: data.phone || '',
-        address: data.address || '',
-      })
-      if (!error) return null
-      if (error !== 'offline') return error
+      try {
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 10000)
+        )
+        const result = await Promise.race([
+          signUpUser({
+            email: data.email,
+            password: data.pass,
+            name: data.name,
+            phone: data.phone || '',
+            address: data.address || '',
+          }),
+          timeout,
+        ])
+        if (!result.error) return null
+        if (result.error === 'offline') {
+          // fallback offline
+        } else {
+          return result.error
+        }
+      } catch (e) {
+        if (e.message === 'timeout') return 'انتهت مهلة الاتصال — تحقق من الإنترنت'
+        return 'حدث خطأ في الاتصال — حاول مجدداً'
+      }
     }
     // Fallback offline
     if (users.find(u => u.email === data.email)) return 'هذا البريد مسجل مسبقاً'
@@ -254,6 +294,7 @@ export function StoreProvider({ children }) {
       category: prod.category || 'عام',
       icon: prod.icon || '💊',
       description: prod.description || '',
+      image_url: prod.image_url || null,
     })
     if (sbProd) {
       setProducts(prev => {
@@ -281,6 +322,7 @@ export function StoreProvider({ children }) {
       category: updated.category,
       icon: updated.icon,
       description: updated.description,
+      image_url: updated.image_url || null,
     })
     setProducts(prev => {
       const arr = prev.map(p => p.id === updated.id ? updated : p)
